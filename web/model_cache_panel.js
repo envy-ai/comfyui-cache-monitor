@@ -123,7 +123,35 @@ function addStyles() {
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
         }
-        .cache-monitor-table tbody tr:last-child td {
+        .cache-monitor-table .cache-monitor-model-row td {
+            padding-bottom: 4px;
+            border-bottom: 0;
+        }
+        .cache-monitor-table .cache-monitor-model-bars td {
+            padding: 0 0 6px;
+            border-bottom: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+        }
+        .cache-monitor-memory-bars {
+            display: grid;
+            width: 100%;
+            gap: 2px;
+        }
+        .cache-monitor-memory-bar {
+            height: 3px;
+            overflow: hidden;
+            background: color-mix(in srgb, var(--border-color, #666) 45%, transparent);
+        }
+        .cache-monitor-memory-fill {
+            height: 100%;
+            transition: width 160ms ease-out;
+        }
+        .cache-monitor-memory-fill.ram {
+            background: var(--p-green-500, #22c55e);
+        }
+        .cache-monitor-memory-fill.vram {
+            background: var(--p-blue-500, #3b82f6);
+        }
+        .cache-monitor-table tbody tr:last-child:not(.cache-monitor-model-bars) td {
             border-bottom: 0;
         }
         .cache-monitor-empty,
@@ -153,6 +181,22 @@ function formatBytes(value) {
     const unit = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
     const amount = value / (1024 ** unit);
     return `${amount >= 100 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+}
+
+function memoryBar(kind, bytes, totalBytes) {
+    const percent = totalBytes > 0 ? Math.min(100, Math.max(0, bytes / totalBytes * 100)) : 0;
+    const label = `${kind.toUpperCase()}: ${percent.toFixed(1)}% (${formatBytes(bytes)} of ${formatBytes(totalBytes)})`;
+    const track = element("div", "cache-monitor-memory-bar");
+    track.title = label;
+    track.setAttribute("role", "progressbar");
+    track.setAttribute("aria-label", `${kind.toUpperCase()} model residency`);
+    track.setAttribute("aria-valuemin", "0");
+    track.setAttribute("aria-valuemax", "100");
+    track.setAttribute("aria-valuenow", percent.toFixed(1));
+    const fill = element("div", `cache-monitor-memory-fill ${kind}`);
+    fill.style.width = `${percent}%`;
+    track.append(fill);
+    return track;
 }
 
 function addCard(container, title, lines) {
@@ -204,7 +248,7 @@ function renderModels(body, models) {
     }
 
     for (const model of models) {
-        const row = element("tr");
+        const row = element("tr", "cache-monitor-model-row");
         const values = [
             [model.model, undefined],
             [model.device, undefined],
@@ -217,7 +261,18 @@ function renderModels(body, models) {
             if (bytes !== undefined) cell.title = `${bytes.toLocaleString()} bytes`;
             row.append(cell);
         }
-        body.append(row);
+
+        const barsRow = element("tr", "cache-monitor-model-bars");
+        const barsCell = element("td");
+        barsCell.colSpan = 5;
+        const bars = element("div", "cache-monitor-memory-bars");
+        bars.append(
+            memoryBar("ram", model.system_ram_bytes, model.total_weight_bytes),
+            memoryBar("vram", model.vram_bytes, model.total_weight_bytes),
+        );
+        barsCell.append(bars);
+        barsRow.append(barsCell);
+        body.append(row, barsRow);
     }
 }
 
