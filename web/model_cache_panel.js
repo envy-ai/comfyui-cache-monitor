@@ -2,6 +2,7 @@ import { app } from "../../../scripts/app.js";
 import { api } from "../../../scripts/api.js";
 
 const ENDPOINT = "/comfyui-cache-monitor/model-cache";
+const PIN_ENDPOINT = "/comfyui-cache-monitor/model-pin";
 const STYLE_ID = "comfyui-cache-monitor-style";
 let destroyPanel = null;
 
@@ -108,13 +109,18 @@ function addStyles() {
         }
         .cache-monitor-table th:first-child,
         .cache-monitor-table td:first-child {
-            width: 36%;
+            width: 31%;
             text-align: left;
         }
         .cache-monitor-table th:nth-child(2),
         .cache-monitor-table td:nth-child(2) {
-            width: 15%;
+            width: 14%;
             text-align: left;
+        }
+        .cache-monitor-model-table th:last-child,
+        .cache-monitor-model-table td:last-child {
+            width: 52px;
+            text-align: center;
         }
         .cache-monitor-table td:first-child {
             overflow-wrap: anywhere;
@@ -163,6 +169,24 @@ function addStyles() {
         }
         .cache-monitor-error {
             color: var(--error-text, #f38b8b);
+        }
+        .cache-monitor-pin-button {
+            min-width: 44px;
+            padding: 2px 5px;
+            border: 1px solid var(--border-color, rgba(255, 255, 255, 0.2));
+            border-radius: 4px;
+            background: transparent;
+            color: var(--descrip-text, #a4a7ad);
+            font: inherit;
+            cursor: pointer;
+        }
+        .cache-monitor-pin-button[aria-pressed="true"] {
+            border-color: var(--p-green-500, #22c55e);
+            color: var(--p-green-500, #22c55e);
+        }
+        .cache-monitor-pin-button:disabled {
+            cursor: wait;
+            opacity: 0.55;
         }
     `;
     document.head.append(style);
@@ -217,6 +241,8 @@ function renderSummary(container, data) {
     container.replaceChildren();
     addCard(container, "Models", [
         ["Active", String(data.models.length)],
+        ["Pinned", String(data.models.filter((model) => model.pinned).length)],
+        ["Pinned RAM", formatBytes(data.system_ram.pinned_model_bytes), data.system_ram.pinned_model_bytes],
     ]);
 
     const ram = data.system_ram;
@@ -236,12 +262,12 @@ function renderSummary(container, data) {
     }
 }
 
-function renderModels(body, models) {
+function renderModels(body, models, setPinned) {
     body.replaceChildren();
     if (!models.length) {
         const row = element("tr");
         const cell = element("td", "cache-monitor-empty", "No models are in ComfyUI's active model registry.");
-        cell.colSpan = 5;
+        cell.colSpan = 6;
         row.append(cell);
         body.append(row);
         return;
@@ -261,10 +287,24 @@ function renderModels(body, models) {
             if (bytes !== undefined) cell.title = `${bytes.toLocaleString()} bytes`;
             row.append(cell);
         }
+        const pinCell = element("td");
+        const pinButton = element("button", "cache-monitor-pin-button", model.pinned ? "Pinned" : "Pin");
+        pinButton.type = "button";
+        pinButton.title = model.pinned
+            ? "Allow this model to be unloaded from system RAM"
+            : "Keep this model in system RAM until it is unpinned or ComfyUI exits";
+        pinButton.setAttribute("aria-label", `${model.pinned ? "Unpin" : "Pin"} ${model.model} in system RAM`);
+        pinButton.setAttribute("aria-pressed", String(model.pinned));
+        pinButton.addEventListener("click", async () => {
+            pinButton.disabled = true;
+            await setPinned(model, !model.pinned);
+        });
+        pinCell.append(pinButton);
+        row.append(pinCell);
 
         const barsRow = element("tr", "cache-monitor-model-bars");
         const barsCell = element("td");
-        barsCell.colSpan = 5;
+        barsCell.colSpan = 6;
         const bars = element("div", "cache-monitor-memory-bars");
         bars.append(
             memoryBar("ram", model.system_ram_bytes, model.total_weight_bytes),
@@ -326,10 +366,10 @@ function renderPanel(container) {
 
     const summary = element("div", "cache-monitor-summary");
     const tableWrap = element("div", "cache-monitor-table-wrap");
-    const table = element("table", "cache-monitor-table");
+    const table = element("table", "cache-monitor-table cache-monitor-model-table");
     const head = element("thead");
     const headerRow = element("tr");
-    for (const title of ["Model", "For device", "RAM", "VRAM", "Total"]) {
+    for (const title of ["Model", "For device", "RAM", "VRAM", "Total", "RAM pin"]) {
         headerRow.append(element("th", "", title));
     }
     head.append(headerRow);
@@ -356,6 +396,28 @@ function renderPanel(container) {
     let refreshing = false;
     let request = null;
 
+    const setPinned = async (model, pinned) => {
+        try {
+            const response = await api.fetchApi(PIN_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cache_id: model.cache_id, pinned }),
+            });
+            if (!response.ok) {
+                const data = await response.json();
+                throw new Error(data.error || `${response.status} ${response.statusText}`);
+            }
+            await refresh();
+        } catch (error) {
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not change RAM pin",
+                detail: error.message,
+                life: 5000,
+            });
+        }
+    };
+
     const refresh = async () => {
         if (!active || refreshing || !container.isConnected || container.getClientRects().length === 0) return;
         refreshing = true;
@@ -366,7 +428,7 @@ function renderPanel(container) {
             const data = await response.json();
             if (!active) return;
             renderSummary(summary, data);
-            renderModels(body, data.models);
+            renderModels(body, data.models, setPinned);
             renderRemovedModels(removedBody, data.removed_models);
             updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
         } catch (error) {
@@ -376,7 +438,7 @@ function renderPanel(container) {
             removedBody.replaceChildren();
             const row = element("tr");
             const cell = element("td", "cache-monitor-error", `Unable to read active model state: ${error.message}`);
-            cell.colSpan = 5;
+            cell.colSpan = 6;
             row.append(cell);
             body.append(row);
             updated.textContent = "Unavailable";

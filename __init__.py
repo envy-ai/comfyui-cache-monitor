@@ -3,7 +3,7 @@ from typing_extensions import override
 from comfy_api.latest import ComfyExtension, io
 
 from .api import register_routes
-from .model_cache import start_model_cache_history
+from .model_cache import install_model_pinning_hooks, start_model_cache_history
 from .nodes import ComfyUICacheMonitorInfo
 
 
@@ -13,6 +13,7 @@ WEB_DIRECTORY = "./web"
 class ComfyUICacheMonitorExtension(ComfyExtension):
     @override
     async def on_load(self) -> None:
+        install_model_pinning_hooks()
         register_routes()
         start_model_cache_history()
 
