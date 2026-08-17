@@ -171,8 +171,12 @@ function addStyles() {
             color: var(--error-text, #f38b8b);
         }
         .cache-monitor-pin-button {
-            min-width: 44px;
-            padding: 2px 5px;
+            display: inline-flex;
+            width: 28px;
+            height: 28px;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
             border: 1px solid var(--border-color, rgba(255, 255, 255, 0.2));
             border-radius: 4px;
             background: transparent;
@@ -188,6 +192,11 @@ function addStyles() {
             cursor: wait;
             opacity: 0.55;
         }
+        .cache-monitor-pin-icon {
+            width: 18px;
+            height: 18px;
+            fill: currentColor;
+        }
     `;
     document.head.append(style);
 }
@@ -197,6 +206,17 @@ function element(tag, className, text) {
     if (className) value.className = className;
     if (text !== undefined) value.textContent = text;
     return value;
+}
+
+function keepIcon() {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("cache-monitor-pin-icon");
+    svg.setAttribute("viewBox", "0 -960 960 960");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "m640-480 80 80v80H520v240l-40 40-40-40v-240H240v-80l80-80v-280h-40v-80h400v80h-40v280Zm-286 80h252l-46-46v-314H400v314l-46 46Zm126 0Z");
+    svg.append(path);
+    return svg;
 }
 
 function formatBytes(value) {
@@ -288,13 +308,14 @@ function renderModels(body, models, setPinned) {
             row.append(cell);
         }
         const pinCell = element("td");
-        const pinButton = element("button", "cache-monitor-pin-button", model.pinned ? "Pinned" : "Pin");
+        const pinButton = element("button", "cache-monitor-pin-button");
         pinButton.type = "button";
         pinButton.title = model.pinned
             ? "Allow this model to be unloaded from system RAM"
             : "Keep this model in system RAM until it is unpinned or ComfyUI exits";
         pinButton.setAttribute("aria-label", `${model.pinned ? "Unpin" : "Pin"} ${model.model} in system RAM`);
         pinButton.setAttribute("aria-pressed", String(model.pinned));
+        pinButton.append(keepIcon());
         pinButton.addEventListener("click", async () => {
             pinButton.disabled = true;
             await setPinned(model, !model.pinned);
