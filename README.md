@@ -1,5 +1,11 @@
 Provides a graphical monitor sidebar for ComfyUI's model cache, both for VRAM and system RAM, so you can see wtf it's actually doing.
 
+Pinned models that leave ComfyUI's active model registry remain visible as **Retained**. Unpinning a retained model immediately releases its dynamic RAM and VRAM caches, so old pinned generations cannot remain hidden and unmanageable.
+
+The **X** beside a model removes that item from ComfyUI's execution and model caches, releasing its system RAM and VRAM. Removal is refused while a prompt is running.
+
+The sidebar's **Wait for external VRAM** checkbox pauses an active prompt at model loading when another process is holding the VRAM ComfyUI has determined it needs. The prompt resumes automatically when enough memory becomes available. Uncheck it or cancel the prompt to stop waiting. Requirements that cannot fit even if the external allocation is released still fail normally.
+
 Also adds a special API endpoint that flushes models out of VRAM without also evicting them from system RAM:
 
 /comfyui-cache-monitor/release_vram

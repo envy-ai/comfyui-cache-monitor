@@ -3,6 +3,9 @@ import { api } from "../../../scripts/api.js";
 
 const ENDPOINT = "/comfyui-cache-monitor/model-cache";
 const PIN_ENDPOINT = "/comfyui-cache-monitor/model-pin";
+const REMOVE_ENDPOINT = "/comfyui-cache-monitor/model-remove";
+const RELEASE_VRAM_ENDPOINT = "/comfyui-cache-monitor/release_vram";
+const VRAM_WAIT_ENDPOINT = "/comfyui-cache-monitor/vram-wait";
 const STYLE_ID = "comfyui-cache-monitor-style";
 let destroyPanel = null;
 
@@ -36,6 +39,57 @@ function addStyles() {
             color: var(--descrip-text, #a4a7ad);
             font-size: 10px;
             white-space: nowrap;
+        }
+        .cache-monitor-header-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .cache-monitor-action-button {
+            padding: 5px 8px;
+            border: 1px solid var(--border-color, rgba(255, 255, 255, 0.2));
+            border-radius: 4px;
+            background: var(--comfy-input-bg, rgba(0, 0, 0, 0.22));
+            color: var(--input-text, #e6e8ec);
+            font: inherit;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .cache-monitor-action-button:hover:not(:disabled) {
+            border-color: var(--p-blue-500, #3b82f6);
+        }
+        .cache-monitor-action-button:disabled {
+            cursor: wait;
+            opacity: 0.55;
+        }
+        .cache-monitor-wait-control {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 12px;
+            padding: 8px 9px;
+            border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+            border-radius: 5px;
+            background: var(--comfy-input-bg, rgba(0, 0, 0, 0.22));
+        }
+        .cache-monitor-wait-control input {
+            margin: 2px 0 0;
+        }
+        .cache-monitor-wait-copy {
+            display: grid;
+            min-width: 0;
+            gap: 2px;
+        }
+        .cache-monitor-wait-label {
+            font-weight: 600;
+        }
+        .cache-monitor-wait-description,
+        .cache-monitor-wait-status {
+            color: var(--descrip-text, #a4a7ad);
+            line-height: 1.35;
+        }
+        .cache-monitor-wait-status.waiting {
+            color: var(--p-yellow-500, #eab308);
         }
         .cache-monitor-summary {
             display: grid;
@@ -109,17 +163,26 @@ function addStyles() {
         }
         .cache-monitor-table th:first-child,
         .cache-monitor-table td:first-child {
-            width: 31%;
             text-align: left;
         }
-        .cache-monitor-table th:nth-child(2),
-        .cache-monitor-table td:nth-child(2) {
+        .cache-monitor-model-table th:first-child,
+        .cache-monitor-model-table td:first-child {
+            width: 27%;
+            text-align: left;
+        }
+        .cache-monitor-model-table th:nth-child(2),
+        .cache-monitor-model-table td:nth-child(2) {
+            width: 12%;
+            text-align: left;
+        }
+        .cache-monitor-model-table th:nth-child(3),
+        .cache-monitor-model-table td:nth-child(3) {
             width: 14%;
             text-align: left;
         }
         .cache-monitor-model-table th:last-child,
         .cache-monitor-model-table td:last-child {
-            width: 52px;
+            width: 70px;
             text-align: center;
         }
         .cache-monitor-table td:first-child {
@@ -128,6 +191,9 @@ function addStyles() {
         .cache-monitor-table td:not(:first-child) {
             font-variant-numeric: tabular-nums;
             white-space: nowrap;
+        }
+        .cache-monitor-model-state.retained {
+            color: var(--p-yellow-500, #eab308);
         }
         .cache-monitor-table .cache-monitor-model-row td {
             padding-bottom: 4px;
@@ -170,7 +236,13 @@ function addStyles() {
         .cache-monitor-error {
             color: var(--error-text, #f38b8b);
         }
-        .cache-monitor-pin-button {
+        .cache-monitor-model-actions {
+            display: flex;
+            justify-content: center;
+            gap: 4px;
+        }
+        .cache-monitor-pin-button,
+        .cache-monitor-remove-button {
             display: inline-flex;
             width: 28px;
             height: 28px;
@@ -188,11 +260,17 @@ function addStyles() {
             border-color: var(--p-green-500, #22c55e);
             color: var(--p-green-500, #22c55e);
         }
-        .cache-monitor-pin-button:disabled {
+        .cache-monitor-remove-button:hover:not(:disabled) {
+            border-color: var(--p-red-500, #ef4444);
+            color: var(--p-red-500, #ef4444);
+        }
+        .cache-monitor-pin-button:disabled,
+        .cache-monitor-remove-button:disabled {
             cursor: wait;
             opacity: 0.55;
         }
-        .cache-monitor-pin-icon {
+        .cache-monitor-pin-icon,
+        .cache-monitor-remove-icon {
             width: 18px;
             height: 18px;
             fill: currentColor;
@@ -215,6 +293,17 @@ function keepIcon() {
     svg.setAttribute("aria-hidden", "true");
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "m640-480 80 80v80H520v240l-40 40-40-40v-240H240v-80l80-80v-280h-40v-80h400v80h-40v280Zm-286 80h252l-46-46v-314H400v314l-46 46Zm126 0Z");
+    svg.append(path);
+    return svg;
+}
+
+function closeIcon() {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.classList.add("cache-monitor-remove-icon");
+    svg.setAttribute("viewBox", "0 -960 960 960");
+    svg.setAttribute("aria-hidden", "true");
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M256-200 200-256l224-224-224-224 56-56 224 224 224-224 56 56-224 224 224 224-56 56-224-224-224 224Z");
     svg.append(path);
     return svg;
 }
@@ -259,15 +348,21 @@ function addCard(container, title, lines) {
 
 function renderSummary(container, data) {
     container.replaceChildren();
+    const activeModels = data.models.filter((model) => model.active !== false);
+    const retainedModels = data.models.filter((model) => model.active === false);
     addCard(container, "Models", [
-        ["Active", String(data.models.length)],
+        ["Active", String(activeModels.length)],
+        ["Retained", String(retainedModels.length)],
         ["Pinned", String(data.models.filter((model) => model.pinned).length)],
         ["Pinned RAM", formatBytes(data.system_ram.pinned_model_bytes), data.system_ram.pinned_model_bytes],
     ]);
 
     const ram = data.system_ram;
     addCard(container, "System RAM", [
-        ["Active model weights", formatBytes(ram.cached_model_bytes), ram.cached_model_bytes],
+        ["Tracked model weights", formatBytes(ram.cached_model_bytes), ram.cached_model_bytes],
+        ["Active model weights", formatBytes(ram.active_model_bytes ?? ram.cached_model_bytes), ram.active_model_bytes ?? ram.cached_model_bytes],
+        ["Retained model weights", formatBytes(ram.retained_model_bytes ?? 0), ram.retained_model_bytes ?? 0],
+        ["ComfyUI process", formatBytes(ram.process_rss_bytes ?? 0), ram.process_rss_bytes ?? 0],
         ["Available", formatBytes(ram.available_bytes), ram.available_bytes],
         ["Total", formatBytes(ram.total_bytes), ram.total_bytes],
     ]);
@@ -282,50 +377,92 @@ function renderSummary(container, data) {
     }
 }
 
-function renderModels(body, models, setPinned) {
+function renderVramWait(input, status, data) {
+    input.checked = data.enabled;
+    status.classList.toggle("waiting", data.waiting);
+    if (data.waiting) {
+        status.textContent = `Waiting on ${data.device}: ${formatBytes(data.available_bytes)} available, ${formatBytes(data.required_bytes)} required`;
+    } else if (data.enabled) {
+        status.textContent = "Armed; model loading will pause when external VRAM causes a shortfall.";
+    } else {
+        status.textContent = "Disabled";
+    }
+}
+
+function renderModels(body, models, setPinned, removeModel) {
     body.replaceChildren();
     if (!models.length) {
         const row = element("tr");
-        const cell = element("td", "cache-monitor-empty", "No models are in ComfyUI's active model registry.");
-        cell.colSpan = 6;
+        const cell = element("td", "cache-monitor-empty", "No active or retained models.");
+        cell.colSpan = 7;
         row.append(cell);
         body.append(row);
         return;
     }
 
     for (const model of models) {
+        const active = model.active !== false;
         const row = element("tr", "cache-monitor-model-row");
         const values = [
-            [model.model, undefined],
-            [model.device, undefined],
-            [formatBytes(model.system_ram_bytes), model.system_ram_bytes],
-            [formatBytes(model.vram_bytes), model.vram_bytes],
-            [formatBytes(model.total_weight_bytes), model.total_weight_bytes],
+            [model.model, undefined, ""],
+            [active ? "Active" : "Retained", undefined, `cache-monitor-model-state ${active ? "active" : "retained"}`],
+            [model.device, undefined, ""],
+            [formatBytes(model.system_ram_bytes), model.system_ram_bytes, ""],
+            [formatBytes(model.vram_bytes), model.vram_bytes, ""],
+            [formatBytes(model.total_weight_bytes), model.total_weight_bytes, ""],
         ];
-        for (const [value, bytes] of values) {
-            const cell = element("td", "", value);
+        for (const [value, bytes, className] of values) {
+            const cell = element("td", className, value);
             if (bytes !== undefined) cell.title = `${bytes.toLocaleString()} bytes`;
+            if (!active && className.includes("cache-monitor-model-state")) {
+                cell.title = "Pinned by this mod after leaving ComfyUI's active model registry";
+            }
             row.append(cell);
         }
-        const pinCell = element("td");
+        const actionCell = element("td");
+        const actions = element("div", "cache-monitor-model-actions");
         const pinButton = element("button", "cache-monitor-pin-button");
         pinButton.type = "button";
         pinButton.title = model.pinned
-            ? "Allow this model to be unloaded from system RAM"
+            ? active
+                ? "Allow this model to be unloaded from system RAM"
+                : "Release this retained model from system RAM"
             : "Keep this model in system RAM until it is unpinned or ComfyUI exits";
         pinButton.setAttribute("aria-label", `${model.pinned ? "Unpin" : "Pin"} ${model.model} in system RAM`);
         pinButton.setAttribute("aria-pressed", String(model.pinned));
         pinButton.append(keepIcon());
         pinButton.addEventListener("click", async () => {
             pinButton.disabled = true;
-            await setPinned(model, !model.pinned);
+            removeButton.disabled = true;
+            try {
+                await setPinned(model, !model.pinned);
+            } finally {
+                pinButton.disabled = false;
+                removeButton.disabled = false;
+            }
         });
-        pinCell.append(pinButton);
-        row.append(pinCell);
+        const removeButton = element("button", "cache-monitor-remove-button");
+        removeButton.type = "button";
+        removeButton.title = `Remove ${model.model} from ComfyUI's RAM cache and release its VRAM`;
+        removeButton.setAttribute("aria-label", `Remove ${model.model} from system RAM`);
+        removeButton.append(closeIcon());
+        removeButton.addEventListener("click", async () => {
+            pinButton.disabled = true;
+            removeButton.disabled = true;
+            try {
+                await removeModel(model);
+            } finally {
+                pinButton.disabled = false;
+                removeButton.disabled = false;
+            }
+        });
+        actions.append(pinButton, removeButton);
+        actionCell.append(actions);
+        row.append(actionCell);
 
         const barsRow = element("tr", "cache-monitor-model-bars");
         const barsCell = element("td");
-        barsCell.colSpan = 6;
+        barsCell.colSpan = 7;
         const bars = element("div", "cache-monitor-memory-bars");
         bars.append(
             memoryBar("ram", model.system_ram_bytes, model.total_weight_bytes),
@@ -381,16 +518,37 @@ function renderPanel(container) {
     container.classList.add("cache-monitor-panel");
 
     const header = element("div", "cache-monitor-header");
-    header.append(element("h3", "cache-monitor-title", "Active Model Memory"));
+    header.append(element("h3", "cache-monitor-title", "Model Memory"));
+    const headerActions = element("div", "cache-monitor-header-actions");
+    const freeVramButton = element("button", "cache-monitor-action-button", "Free VRAM");
+    freeVramButton.type = "button";
+    freeVramButton.title = "Offload active model weights from VRAM while retaining their RAM caches";
     const updated = element("span", "cache-monitor-updated", "Loading…");
-    header.append(updated);
+    headerActions.append(freeVramButton, updated);
+    header.append(headerActions);
+
+    const waitControl = element("div", "cache-monitor-wait-control");
+    const waitCheckbox = element("input");
+    waitCheckbox.type = "checkbox";
+    waitCheckbox.id = "cache-monitor-wait-for-vram";
+    const waitCopy = element("div", "cache-monitor-wait-copy");
+    const waitLabel = element("label", "cache-monitor-wait-label", "Wait for external VRAM");
+    waitLabel.htmlFor = waitCheckbox.id;
+    const waitDescription = element(
+        "span",
+        "cache-monitor-wait-description",
+        "Hold model loading when another process is using VRAM required by the active prompt.",
+    );
+    const waitStatus = element("span", "cache-monitor-wait-status", "Loading…");
+    waitCopy.append(waitLabel, waitDescription, waitStatus);
+    waitControl.append(waitCheckbox, waitCopy);
 
     const summary = element("div", "cache-monitor-summary");
     const tableWrap = element("div", "cache-monitor-table-wrap");
     const table = element("table", "cache-monitor-table cache-monitor-model-table");
     const head = element("thead");
     const headerRow = element("tr");
-    for (const title of ["Model", "For device", "RAM", "VRAM", "Total", "RAM pin"]) {
+    for (const title of ["Model", "State", "For device", "RAM", "VRAM", "Total", "Actions"]) {
         headerRow.append(element("th", "", title));
     }
     head.append(headerRow);
@@ -411,7 +569,7 @@ function renderPanel(container) {
     removedTable.append(removedHead, removedBody);
     removedWrap.append(removedTable);
 
-    container.append(header, summary, tableWrap, removedTitle, removedWrap);
+    container.append(header, waitControl, summary, tableWrap, removedTitle, removedWrap);
 
     let active = true;
     let refreshing = false;
@@ -424,9 +582,17 @@ function renderPanel(container) {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ cache_id: model.cache_id, pinned }),
             });
+            const data = await response.json();
             if (!response.ok) {
-                const data = await response.json();
                 throw new Error(data.error || `${response.status} ${response.statusText}`);
+            }
+            if (data.released_ram_bytes > 0 || data.released_vram_bytes > 0) {
+                app.extensionManager.toast.add({
+                    severity: "success",
+                    summary: "Retained model released",
+                    detail: `${formatBytes(data.released_ram_bytes)} RAM and ${formatBytes(data.released_vram_bytes)} VRAM released.`,
+                    life: 4000,
+                });
             }
             await refresh();
         } catch (error) {
@@ -439,6 +605,92 @@ function renderPanel(container) {
         }
     };
 
+    const removeModel = async (model) => {
+        try {
+            const response = await api.fetchApi(REMOVE_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cache_id: model.cache_id }),
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.error || `${response.status} ${response.statusText}`);
+            }
+            app.extensionManager.toast.add({
+                severity: "success",
+                summary: "Model removed from RAM",
+                detail: `${formatBytes(data.removed_ram_bytes)} RAM and ${formatBytes(data.released_vram_bytes)} VRAM removed.`,
+                life: 4000,
+            });
+            await refresh();
+        } catch (error) {
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not remove model",
+                detail: error.message,
+                life: 5000,
+            });
+        }
+    };
+
+    const setVramWait = async (enabled) => {
+        const previous = !enabled;
+        waitCheckbox.disabled = true;
+        try {
+            const response = await api.fetchApi(VRAM_WAIT_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || `${response.status} ${response.statusText}`);
+            renderVramWait(waitCheckbox, waitStatus, data);
+        } catch (error) {
+            waitCheckbox.checked = previous;
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not change VRAM wait",
+                detail: error.message,
+                life: 5000,
+            });
+        } finally {
+            waitCheckbox.disabled = false;
+        }
+    };
+
+    waitCheckbox.addEventListener("change", () => setVramWait(waitCheckbox.checked));
+
+    const releaseVram = async () => {
+        freeVramButton.disabled = true;
+        freeVramButton.textContent = "Freeing…";
+        try {
+            const response = await api.fetchApi(RELEASE_VRAM_ENDPOINT, { method: "POST" });
+            const data = await response.json();
+            if (!response.ok || !data.released) {
+                throw new Error(data.error || `${response.status} ${response.statusText}`);
+            }
+            app.extensionManager.toast.add({
+                severity: "success",
+                summary: "VRAM released",
+                detail: `${formatBytes(data.released_bytes)} released from ${data.models.length} active models.`,
+                life: 4000,
+            });
+            await refresh();
+        } catch (error) {
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not free VRAM",
+                detail: error.message,
+                life: 5000,
+            });
+        } finally {
+            freeVramButton.disabled = false;
+            freeVramButton.textContent = "Free VRAM";
+        }
+    };
+
+    freeVramButton.addEventListener("click", releaseVram);
+
     const refresh = async () => {
         if (!active || refreshing || !container.isConnected || container.getClientRects().length === 0) return;
         refreshing = true;
@@ -448,8 +700,9 @@ function renderPanel(container) {
             if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
             const data = await response.json();
             if (!active) return;
+            renderVramWait(waitCheckbox, waitStatus, data.vram_wait);
             renderSummary(summary, data);
-            renderModels(body, data.models, setPinned);
+            renderModels(body, data.models, setPinned, removeModel);
             renderRemovedModels(removedBody, data.removed_models);
             updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
         } catch (error) {
@@ -458,8 +711,8 @@ function renderPanel(container) {
             body.replaceChildren();
             removedBody.replaceChildren();
             const row = element("tr");
-            const cell = element("td", "cache-monitor-error", `Unable to read active model state: ${error.message}`);
-            cell.colSpan = 6;
+            const cell = element("td", "cache-monitor-error", `Unable to read model state: ${error.message}`);
+            cell.colSpan = 7;
             row.append(cell);
             body.append(row);
             updated.textContent = "Unavailable";
@@ -485,7 +738,7 @@ app.registerExtension({
         app.extensionManager.registerSidebarTab({
             id: "comfyui-cache-monitor",
             title: "Model Memory",
-            tooltip: "RAM and VRAM used by ComfyUI's active model registry",
+            tooltip: "RAM and VRAM used by ComfyUI's active and retained models",
             icon: "pi pi-database",
             type: "custom",
             render: renderPanel,
