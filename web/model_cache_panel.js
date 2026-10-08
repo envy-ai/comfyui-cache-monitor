@@ -3,9 +3,11 @@ import { api } from "../../../scripts/api.js";
 
 const ENDPOINT = "/comfyui-cache-monitor/model-cache";
 const PIN_ENDPOINT = "/comfyui-cache-monitor/model-pin";
+const LORA_PIN_ENDPOINT = "/comfyui-cache-monitor/lora-pin";
 const REMOVE_ENDPOINT = "/comfyui-cache-monitor/model-remove";
 const RELEASE_VRAM_ENDPOINT = "/comfyui-cache-monitor/release_vram";
 const VRAM_WAIT_ENDPOINT = "/comfyui-cache-monitor/vram-wait";
+const AGGRESSIVE_EVICTION_ENDPOINT = "/comfyui-cache-monitor/aggressive-eviction";
 const STYLE_ID = "comfyui-cache-monitor-style";
 let destroyPanel = null;
 
@@ -62,7 +64,7 @@ function addStyles() {
             cursor: wait;
             opacity: 0.55;
         }
-        .cache-monitor-wait-control {
+        .cache-monitor-option-control {
             display: flex;
             align-items: flex-start;
             gap: 8px;
@@ -72,19 +74,19 @@ function addStyles() {
             border-radius: 5px;
             background: var(--comfy-input-bg, rgba(0, 0, 0, 0.22));
         }
-        .cache-monitor-wait-control input {
+        .cache-monitor-option-control input {
             margin: 2px 0 0;
         }
-        .cache-monitor-wait-copy {
+        .cache-monitor-option-copy {
             display: grid;
             min-width: 0;
             gap: 2px;
         }
-        .cache-monitor-wait-label {
+        .cache-monitor-option-label {
             font-weight: 600;
         }
-        .cache-monitor-wait-description,
-        .cache-monitor-wait-status {
+        .cache-monitor-option-description,
+        .cache-monitor-option-status {
             color: var(--descrip-text, #a4a7ad);
             line-height: 1.35;
         }
@@ -170,6 +172,15 @@ function addStyles() {
             width: 27%;
             text-align: left;
         }
+        .cache-monitor-model-filename {
+            display: block;
+            width: 100%;
+            overflow: hidden;
+            color: var(--descrip-text, #a4a7ad);
+            font-size: 10px;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
         .cache-monitor-model-table th:nth-child(2),
         .cache-monitor-model-table td:nth-child(2) {
             width: 12%;
@@ -183,6 +194,15 @@ function addStyles() {
         .cache-monitor-model-table th:last-child,
         .cache-monitor-model-table td:last-child {
             width: 70px;
+            text-align: center;
+        }
+        .cache-monitor-lora-table th:first-child,
+        .cache-monitor-lora-table td:first-child {
+            width: 45%;
+        }
+        .cache-monitor-lora-table th:last-child,
+        .cache-monitor-lora-table td:last-child {
+            width: 50px;
             text-align: center;
         }
         .cache-monitor-table td:first-child {
@@ -357,6 +377,14 @@ function renderSummary(container, data) {
         ["Pinned RAM", formatBytes(data.system_ram.pinned_model_bytes), data.system_ram.pinned_model_bytes],
     ]);
 
+    const loras = data.loras ?? [];
+    const pinnedLoraBytes = loras.reduce((total, lora) => total + lora.system_ram_bytes, 0);
+    addCard(container, "LoRAs", [
+        ["Cached", String(loras.filter((lora) => lora.active).length)],
+        ["Pinned", String(loras.filter((lora) => lora.pinned).length)],
+        ["Pinned RAM", formatBytes(pinnedLoraBytes), pinnedLoraBytes],
+    ]);
+
     const ram = data.system_ram;
     addCard(container, "System RAM", [
         ["Tracked model weights", formatBytes(ram.cached_model_bytes), ram.cached_model_bytes],
@@ -389,6 +417,13 @@ function renderVramWait(input, status, data) {
     }
 }
 
+function renderAggressiveEviction(input, status, data) {
+    input.checked = data.enabled;
+    status.textContent = data.enabled
+        ? "Enabled; finished unpinned models will be reloaded if needed again."
+        : "Disabled";
+}
+
 function renderModels(body, models, setPinned, removeModel) {
     body.replaceChildren();
     if (!models.length) {
@@ -418,6 +453,11 @@ function renderModels(body, models, setPinned, removeModel) {
                 cell.title = "Pinned by this mod after leaving ComfyUI's active model registry";
             }
             row.append(cell);
+        }
+        if (model.filename) {
+            const filename = element("span", "cache-monitor-model-filename", model.filename);
+            filename.title = model.filename;
+            row.firstElementChild.append(filename);
         }
         const actionCell = element("td");
         const actions = element("div", "cache-monitor-model-actions");
@@ -474,6 +514,47 @@ function renderModels(body, models, setPinned, removeModel) {
     }
 }
 
+function renderLoras(body, loras, setPinned) {
+    body.replaceChildren();
+    if (!loras.length) {
+        const row = element("tr");
+        const cell = element("td", "cache-monitor-empty", "No cached LoRAs.");
+        cell.colSpan = 5;
+        row.append(cell);
+        body.append(row);
+        return;
+    }
+
+    for (const lora of loras) {
+        const row = element("tr");
+        row.append(
+            element("td", "", lora.name),
+            element("td", "", lora.active ? "Cached" : "Retained"),
+            element("td", "", lora.pinned ? formatBytes(lora.system_ram_bytes) : "File-backed"),
+            element("td", "", formatBytes(lora.total_bytes)),
+        );
+        row.firstElementChild.title = lora.cache_id;
+        const actionCell = element("td");
+        const button = element("button", "cache-monitor-pin-button");
+        button.type = "button";
+        button.title = lora.pinned ? "Release the LoRA's RAM copy" : "Keep a copy of this LoRA in system RAM";
+        button.setAttribute("aria-label", `${lora.pinned ? "Unpin" : "Pin"} ${lora.name} in system RAM`);
+        button.setAttribute("aria-pressed", String(lora.pinned));
+        button.append(keepIcon());
+        button.addEventListener("click", async () => {
+            button.disabled = true;
+            try {
+                await setPinned(lora, !lora.pinned);
+            } finally {
+                button.disabled = false;
+            }
+        });
+        actionCell.append(button);
+        row.append(actionCell);
+        body.append(row);
+    }
+}
+
 function formatRemovedAt(value) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -511,6 +592,22 @@ function renderRemovedModels(body, models) {
     }
 }
 
+function renderPinnedRemovalAttempts(section, body, models) {
+    body.replaceChildren();
+    section.hidden = !models.length;
+    for (const model of models) {
+        const row = element("tr");
+        const attemptedAt = formatRemovedAt(model.attempted_at);
+        row.append(
+            element("td", "", model.model),
+            element("td", "", model.device),
+            element("td", "", attemptedAt),
+        );
+        row.lastElementChild.title = model.attempted_at;
+        body.append(row);
+    }
+}
+
 function renderPanel(container) {
     destroyPanel?.();
     addStyles();
@@ -527,21 +624,37 @@ function renderPanel(container) {
     headerActions.append(freeVramButton, updated);
     header.append(headerActions);
 
-    const waitControl = element("div", "cache-monitor-wait-control");
+    const waitControl = element("div", "cache-monitor-option-control");
     const waitCheckbox = element("input");
     waitCheckbox.type = "checkbox";
     waitCheckbox.id = "cache-monitor-wait-for-vram";
-    const waitCopy = element("div", "cache-monitor-wait-copy");
-    const waitLabel = element("label", "cache-monitor-wait-label", "Wait for external VRAM");
+    const waitCopy = element("div", "cache-monitor-option-copy");
+    const waitLabel = element("label", "cache-monitor-option-label", "Wait for external VRAM");
     waitLabel.htmlFor = waitCheckbox.id;
     const waitDescription = element(
         "span",
-        "cache-monitor-wait-description",
-        "Hold model loading when another process is using VRAM required by the active prompt.",
+        "cache-monitor-option-description",
+        "Hold model loading when another process is using required VRAM, evicting unpinned RAM caches first.",
     );
-    const waitStatus = element("span", "cache-monitor-wait-status", "Loading…");
+    const waitStatus = element("span", "cache-monitor-option-status cache-monitor-wait-status", "Loading…");
     waitCopy.append(waitLabel, waitDescription, waitStatus);
     waitControl.append(waitCheckbox, waitCopy);
+
+    const aggressiveControl = element("div", "cache-monitor-option-control");
+    const aggressiveCheckbox = element("input");
+    aggressiveCheckbox.type = "checkbox";
+    aggressiveCheckbox.id = "cache-monitor-aggressive-eviction";
+    const aggressiveCopy = element("div", "cache-monitor-option-copy");
+    const aggressiveLabel = element("label", "cache-monitor-option-label", "Aggressively evict finished models");
+    aggressiveLabel.htmlFor = aggressiveCheckbox.id;
+    const aggressiveDescription = element(
+        "span",
+        "cache-monitor-option-description",
+        "Release unpinned models from VRAM and system RAM immediately after their final workflow consumer finishes.",
+    );
+    const aggressiveStatus = element("span", "cache-monitor-option-status", "Loading…");
+    aggressiveCopy.append(aggressiveLabel, aggressiveDescription, aggressiveStatus);
+    aggressiveControl.append(aggressiveCheckbox, aggressiveCopy);
 
     const summary = element("div", "cache-monitor-summary");
     const tableWrap = element("div", "cache-monitor-table-wrap");
@@ -556,6 +669,19 @@ function renderPanel(container) {
     table.append(head, body);
     tableWrap.append(table);
 
+    const loraTitle = element("h4", "cache-monitor-section-title", "LoRAs");
+    const loraWrap = element("div", "cache-monitor-table-wrap");
+    const loraTable = element("table", "cache-monitor-table cache-monitor-lora-table");
+    const loraHead = element("thead");
+    const loraHeaderRow = element("tr");
+    for (const title of ["LoRA", "State", "RAM", "Size", "Pin"]) {
+        loraHeaderRow.append(element("th", "", title));
+    }
+    loraHead.append(loraHeaderRow);
+    const loraBody = element("tbody");
+    loraTable.append(loraHead, loraBody);
+    loraWrap.append(loraTable);
+
     const removedTitle = element("h4", "cache-monitor-section-title", "Recently Removed from Active Registry");
     const removedWrap = element("div", "cache-monitor-table-wrap");
     const removedTable = element("table", "cache-monitor-table");
@@ -569,7 +695,23 @@ function renderPanel(container) {
     removedTable.append(removedHead, removedBody);
     removedWrap.append(removedTable);
 
-    container.append(header, waitControl, summary, tableWrap, removedTitle, removedWrap);
+    const attemptsSection = element("section");
+    attemptsSection.hidden = true;
+    const attemptsTitle = element("h4", "cache-monitor-section-title", "Attempts to Remove Pinned Models");
+    const attemptsWrap = element("div", "cache-monitor-table-wrap");
+    const attemptsTable = element("table", "cache-monitor-table");
+    const attemptsHead = element("thead");
+    const attemptsHeaderRow = element("tr");
+    for (const title of ["Model", "For device", "Attempted"]) {
+        attemptsHeaderRow.append(element("th", "", title));
+    }
+    attemptsHead.append(attemptsHeaderRow);
+    const attemptsBody = element("tbody");
+    attemptsTable.append(attemptsHead, attemptsBody);
+    attemptsWrap.append(attemptsTable);
+    attemptsSection.append(attemptsTitle, attemptsWrap);
+
+    container.append(header, waitControl, aggressiveControl, summary, tableWrap, loraTitle, loraWrap, removedTitle, removedWrap, attemptsSection);
 
     let active = true;
     let refreshing = false;
@@ -605,6 +747,26 @@ function renderPanel(container) {
         }
     };
 
+    const setLoraPinned = async (lora, pinned) => {
+        try {
+            const response = await api.fetchApi(LORA_PIN_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ cache_id: lora.cache_id, pinned }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || `${response.status} ${response.statusText}`);
+            await refresh();
+        } catch (error) {
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not change LoRA pin",
+                detail: error.message,
+                life: 5000,
+            });
+        }
+    };
+
     const removeModel = async (model) => {
         try {
             const response = await api.fetchApi(REMOVE_ENDPOINT, {
@@ -615,6 +777,15 @@ function renderPanel(container) {
             const data = await response.json();
             if (!response.ok) {
                 throw new Error(data.error || `${response.status} ${response.statusText}`);
+            }
+            if (data.queued) {
+                app.extensionManager.toast.add({
+                    severity: "info",
+                    summary: "Model removal queued",
+                    detail: "It will be removed as soon as the current node is no longer using it.",
+                    life: 4000,
+                });
+                return;
             }
             app.extensionManager.toast.add({
                 severity: "success",
@@ -660,6 +831,33 @@ function renderPanel(container) {
 
     waitCheckbox.addEventListener("change", () => setVramWait(waitCheckbox.checked));
 
+    const setAggressiveEviction = async (enabled) => {
+        const previous = !enabled;
+        aggressiveCheckbox.disabled = true;
+        try {
+            const response = await api.fetchApi(AGGRESSIVE_EVICTION_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || `${response.status} ${response.statusText}`);
+            renderAggressiveEviction(aggressiveCheckbox, aggressiveStatus, data);
+        } catch (error) {
+            aggressiveCheckbox.checked = previous;
+            app.extensionManager.toast.add({
+                severity: "error",
+                summary: "Could not change aggressive eviction",
+                detail: error.message,
+                life: 5000,
+            });
+        } finally {
+            aggressiveCheckbox.disabled = false;
+        }
+    };
+
+    aggressiveCheckbox.addEventListener("change", () => setAggressiveEviction(aggressiveCheckbox.checked));
+
     const releaseVram = async () => {
         freeVramButton.disabled = true;
         freeVramButton.textContent = "Freeing…";
@@ -701,15 +899,21 @@ function renderPanel(container) {
             const data = await response.json();
             if (!active) return;
             renderVramWait(waitCheckbox, waitStatus, data.vram_wait);
+            renderAggressiveEviction(aggressiveCheckbox, aggressiveStatus, data.aggressive_eviction);
             renderSummary(summary, data);
             renderModels(body, data.models, setPinned, removeModel);
+            renderLoras(loraBody, data.loras ?? [], setLoraPinned);
             renderRemovedModels(removedBody, data.removed_models);
+            renderPinnedRemovalAttempts(attemptsSection, attemptsBody, data.pinned_removal_attempts ?? []);
             updated.textContent = `Updated ${new Date().toLocaleTimeString()}`;
         } catch (error) {
             if (!active || error.name === "AbortError") return;
             summary.replaceChildren();
             body.replaceChildren();
+            loraBody.replaceChildren();
             removedBody.replaceChildren();
+            attemptsBody.replaceChildren();
+            attemptsSection.hidden = true;
             const row = element("tr");
             const cell = element("td", "cache-monitor-error", `Unable to read model state: ${error.message}`);
             cell.colSpan = 7;

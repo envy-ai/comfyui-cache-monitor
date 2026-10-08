@@ -1,0 +1,35 @@
+[project]
+name = "cache-monitor"
+description = "Adds a RAM cache monitoring and management sidebar. Shows you which models are in VRAM and System ram, gives you an option to pin them to system ram so they can't be removed from cache, or force remove them yourself. Also has a button to free all VRAM without clearing system RAM cache, and an API endpoint to do the same thing. Can be configured to make ComfyUI wait for other processes to yield VRAM rather than plowing ahed and OOMing."
+version = "1.1.0"
+license = "cc0 (or public domain, user's choice)"
+
+# classifiers = [
+#     # For OS-independent nodes (works on all operating systems)
+#     "Operating System :: OS Independent",
+#
+#     # OR for OS-specific nodes, specify the supported systems:
+#     "Operating System :: Microsoft :: Windows",  # Windows specific
+#     "Operating System :: POSIX :: Linux",  # Linux specific
+#     "Operating System :: MacOS",  # macOS specific
+#
+#     # GPU Accelerator support. Pick the ones that are supported by your extension.
+#     "Environment :: GPU :: NVIDIA CUDA",    # NVIDIA CUDA support
+#     "Environment :: GPU :: AMD ROCm",       # AMD ROCm support
+#     "Environment :: GPU :: Intel Arc",      # Intel Arc support
+#     "Environment :: NPU :: Huawei Ascend",  # Huawei Ascend support
+#     "Environment :: GPU :: Apple Metal",    # Apple Metal support
+# ]
+
+[project.urls]
+Repository = "https://github.com/envy-ai/comfyui-cache-monitor"
+#  Used by Comfy Registry https://registry.comfy.org
+Documentation = "https://github.com/envy-ai/comfyui-cache-monitor/wiki"
+"Bug Tracker" = "https://github.com/envy-ai/comfyui-cache-monitor/issues"
+
+[tool.comfy]
+PublisherId = "envy-ai"
+DisplayName = "ComfyUI Cache Monitor"
+Icon = ""
+includes = []
+# "requires-comfyui" = ">=1.0.0"  # ComfyUI version compatibility
